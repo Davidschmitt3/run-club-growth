@@ -1,69 +1,57 @@
-# Tableau Build Guide: Green House Run Club Dashboard
+# Power BI Build Guide: Green House Run Club Dashboard
 
 Source file: `data/weekly_metrics.csv`. Total build time: about an hour.
 
-## 1. Connect the data
+## 1. Load the data
 
-1. Open Tableau Desktop > Connect > Text File > select `weekly_metrics.csv`.
-2. In the Data Source tab, confirm types: `week_start` = Date, `attendees` / `first_timers` / `returning_runners` / `instagram_views` / `instagram_engagement` = Number (whole), `avg_temp_f` = Number (decimal), `event_type` = String.
-3. Add two calculated fields:
-   - `First Timer Share` = `[first_timers] / [attendees]`
-   - `Heat Bucket` =
-     ```
-     IF [avg_temp_f] >= 76 THEN "Hot (76F+)"
-     ELSEIF [avg_temp_f] >= 68 THEN "Warm (68-76F)"
-     ELSE "Mild (<68F)"
-     END
-     ```
+1. Home > Get Data > Text/CSV > select `weekly_metrics.csv` > Transform Data.
+2. In Power Query, set types: `week_start` = Date, counts = Whole Number, `avg_temp_f` = Decimal Number, `event_type` = Text.
+3. Add columns (Add Column > Custom Column):
+   - `MonthName` = `Date.ToText([week_start], "MMM")`
+   - `MonthNum` = `Date.Month([week_start])` (sort MonthName by this later)
+   - `HeatBucket` = `if [avg_temp_f] >= 76 then "Hot (76F+)" else if [avg_temp_f] >= 68 then "Warm (68-76F)" else "Mild (<68F)"`
+4. Close & Apply. In Model view, sort `MonthName` by `MonthNum`.
 
-## 2. Sheets
+## 2. Measures (Modeling > New Measure)
 
-### Sheet A: Weekly attendance trend (line)
-- Columns: `WEEK(week_start)` (continuous, exact date)
-- Rows: `AVG(attendees)`
-- Color: `event_type`
-- Add a trend line (Analytics pane > Trend Line > Linear) and turn on Mark Labels for Brand Collab and Special Event points only.
-- Format: line thickness 2, show gridlines off.
+```dax
+Avg Attendance = AVERAGE(weekly_metrics[attendees])
 
-### Sheet B: Seasonality by month (bar)
-- Columns: `MONTH(week_start)` as discrete (Jan, Feb...)
-- Rows: `AVG(attendees)`
-- Color: `AVG(avg_temp_f)` (orange sequential palette, reversed so hotter = darker)
-- Sort: by month order, not by value.
-- Tooltip: add `AVG(avg_temp_f)` and record count.
+First Timer Share = DIVIDE(SUM(weekly_metrics[first_timers]), SUM(weekly_metrics[attendees]))
 
-### Sheet C: Event type comparison (bar)
-- Rows: `event_type`
-- Columns: `AVG(attendees)`
-- Label: show mark labels with one decimal.
-- Sort descending. This is the "Red Bull / Prime weeks double turnout" chart.
+Collab Lift Pct =
+DIVIDE(
+    CALCULATE(AVERAGE(weekly_metrics[attendees]), weekly_metrics[event_type] = "Brand Collab"),
+    CALCULATE(AVERAGE(weekly_metrics[attendees]), weekly_metrics[event_type] = "Regular")
+) - 1
 
-### Sheet D: Instagram vs attendance (scatter)
-- Columns: `instagram_engagement`
-- Rows: `attendees`
-- Detail: `event_type` (also put it on Shape so collab weeks stand out)
-- Analytics pane > Trend Line. Check "Show R-Squared" in the trend line tooltip options.
-- Tooltip: `week_start`, `instagram_views`, `event_type`.
+Growth First13 vs Last13 =
+VAR First13 = CALCULATE(AVERAGE(weekly_metrics[attendees]), TOPN(13, weekly_metrics, weekly_metrics[week_start], ASC))
+VAR Last13  = CALCULATE(AVERAGE(weekly_metrics[attendees]), TOPN(13, weekly_metrics, weekly_metrics[week_start], DESC))
+RETURN DIVIDE(Last13 - First13, First13)
+```
 
-### Sheet E: First-timer share over time (area)
-- Columns: `WEEK(week_start)`
-- Rows: `First Timer Share` (format as %)
-- Area chart, light fill. Add a constant reference line at 0.30.
+## 3. Report pages
 
-## 3. Dashboard: "Green House Run Club Growth"
+### Page 1: Growth overview
+- **Card visuals (x3):** `Avg Attendance` (title: "Avg runners / week"), `Growth First13 vs Last13` formatted as % ("Growth, first 13 vs last 13 weeks"), `Collab Lift Pct` formatted as % ("Brand collab lift").
+- **Line chart:** Axis = `week_start`, Values = `Avg Attendance`. Legend = `event_type`. Turn on data labels only for max points if needed. Title: "Weekly attendance, Jan 2024 - Sep 2025".
+- **Clustered bar chart:** Y-axis = `event_type`, X-axis = `Avg Attendance`. Data labels on. Title: "Brand collabs double turnout".
 
-Layout (1600 x 900, tiled):
-- Top row: title + three KPI text boxes (Insert > Text, big numbers):
-  - Last 13 weeks avg: 82.2 runners
-  - Growth vs first 13 weeks: +180.6%
-  - Brand collab lift: +82.3%
-- Middle row: Sheet A (wide, spans 2/3) + Sheet C (1/3)
-- Bottom row: Sheet B + Sheet D + Sheet E, equal thirds.
+### Page 2: Seasonality and social
+- **Clustered column chart:** X-axis = `MonthName`, Y-axis = `Avg Attendance`. Sort by MonthNum. Title: "Attendance by month".
+- **Scatter chart:** X = `instagram_engagement` (Values), Y = `attendees` (Values), Legend = `event_type`. Turn on the trend line under Analytics. Title: "Instagram engagement vs attendance".
+- **Area chart:** X-axis = `week_start`, Y-axis = `First Timer Share` (format %). Title: "First-timer share holds near 30%".
+- **Donut chart:** Legend = `HeatBucket`, Values = count of weeks. Title: "Weeks by heat bucket".
 
-## 4. Filters and interactivity
+### Slicers (put on both pages, synced)
+- `event_type` as a multi-select slicer (vertical list).
+- `week_start` as a "Between" date slicer.
 
-- Add `event_type` as a multi-select filter (applies to all sheets using the data source: right-click filter > Apply to Worksheets > All Using This Data Source).
-- Add `week_start` as a range-of-dates slider filter, same apply-to setting.
-- Dashboard > Actions > Add Filter Action: selecting points in Sheet D filters the whole dashboard to those weeks.
-- Rename all sheet titles to plain English ("Weekly attendance", not "Sheet A").
-- Publish to Tableau Public when done; paste the link in the README.
+## 4. Polish and interactivity
+
+- Format > Page > 16:9 canvas. Dark header bar with the club name as a text box.
+- Select the scatter chart > Format > Edit interactions: set it to filter the other visuals on click.
+- Turn off "Include in tooltip" clutter: keep tooltips to week, attendees, event type, engagement.
+- Rename every visual title to plain English. No default "Sum of attendees" titles left anywhere.
+- File > Publish > Publish to Power BI Service when done; paste the link in the README.
